@@ -360,15 +360,22 @@ def main():
                 
                 # Calculate counselor needs
                 total_adoption_time = daily_adoptions_for_calc * avg_time  # minutes
-                non_adopting_multiplier = 1 + (non_adopting_pct / 100)
-                total_counselor_time = total_adoption_time * non_adopting_multiplier
+                
+                # Fix the non-adopting calculation
+                # If non_adopting_pct is 50%, and we have 10 adoptions, 
+                # that means 50% of total customers are non-adopters
+                # So total customers = adoptions / (1 - non_adopting_pct/100)
+                total_customers = daily_adoptions_for_calc / (1 - non_adopting_pct / 100)
+                non_adopting_customers = total_customers - daily_adoptions_for_calc
+                
+                total_counselor_time = total_customers * avg_time  # minutes
                 total_counselor_hours = total_counselor_time / 60
                 hours_per_counselor = total_counselor_hours / num_counselors
                 
-                # Calculate expected guests
+                # Calculate expected guests (for display)
                 expected_adopting_guests = daily_adoptions_for_calc
-                expected_non_adopting_guests = daily_adoptions_for_calc * (non_adopting_pct / 100)
-                total_expected_guests = expected_adopting_guests + expected_non_adopting_guests
+                expected_non_adopting_guests = non_adopting_customers
+                total_expected_guests = total_customers
                 
                 # Display math breakdown
                 st.subheader("🧮 Calculation Breakdown")
@@ -389,19 +396,19 @@ def main():
                 with col2:
                     # Peak day analysis (using 35 as peak)
                     peak_day_adoptions = 35
+                    peak_day_total_customers = peak_day_adoptions / (1 - non_adopting_pct / 100)
                     peak_day_adopting_guests = peak_day_adoptions
-                    peak_day_non_adopting_guests = peak_day_adoptions * (non_adopting_pct / 100)
-                    peak_day_total_guests = peak_day_adopting_guests + peak_day_non_adopting_guests
-                    peak_day_total_time = peak_day_total_guests * avg_time / 60  # hours
+                    peak_day_non_adopting_guests = peak_day_total_customers - peak_day_adoptions
+                    peak_day_total_time = peak_day_total_customers * avg_time / 60  # hours
                     peak_day_per_counselor = peak_day_total_time / num_counselors
                     
                     st.markdown("**Peak Day Analysis (35 adoptions):**")
                     st.markdown(f"• Adopting guests: {peak_day_adopting_guests:.1f}")
                     st.markdown(f"• Non-adopting guests: {peak_day_non_adopting_guests:.1f}")
-                    st.markdown(f"• **Total expected guests: {peak_day_total_guests:.1f}**")
+                    st.markdown(f"• **Total expected guests: {peak_day_total_customers:.1f}**")
                     st.markdown("**Time Calculation:**")
-                    st.markdown(f"• Total time: {peak_day_total_guests:.1f} guests × {avg_time} min = {peak_day_total_guests * avg_time:.0f} min")
-                    st.markdown(f"• Convert to hours: {peak_day_total_guests * avg_time:.0f} min ÷ 60 = {peak_day_total_time:.1f} hours")
+                    st.markdown(f"• Total time: {peak_day_total_customers:.1f} guests × {avg_time} min = {peak_day_total_time:.0f} min")
+                    st.markdown(f"• Convert to hours: {peak_day_total_time:.0f} min ÷ 60 = {peak_day_total_time:.1f} hours")
                     st.markdown(f"• Per counselor: {peak_day_total_time:.1f} hours ÷ {num_counselors} counselors = **{peak_day_per_counselor:.1f} hours**")
                 
                 # Workload summary chart
@@ -459,7 +466,9 @@ def main():
                         hourly_adoptions_counselor = complete_df_counselor.groupby('Hour')['Adoptions'].mean()
                         
                         # Calculate workload
-                        hourly_workload = hourly_adoptions_counselor * avg_time * non_adopting_multiplier / 60
+                        # For hourly workload, we need to calculate total customers per hour
+                        hourly_total_customers = hourly_adoptions_counselor / (1 - non_adopting_pct / 100)
+                        hourly_workload = hourly_total_customers * avg_time / 60
                         
                         # Convert hours to 12-hour format for display
                         def format_hour(hour):
