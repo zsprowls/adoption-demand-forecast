@@ -73,12 +73,47 @@ def main():
             step=1
         )
         
+        # Outlier removal option
+        remove_outliers = st.sidebar.checkbox(
+            "Remove outliers from calculations",
+            help="Removes statistical outliers to get a cleaner baseline for normal operations"
+        )
+        
         # Show data info
         st.sidebar.markdown("---")
         st.sidebar.markdown("📊 **Data Info:**")
         st.sidebar.markdown(f"• Total records: {len(forecast.data):,}")
         st.sidebar.markdown(f"• Date range: {forecast.data['DateTime'].min().strftime('%Y-%m-%d')} to {forecast.data['DateTime'].max().strftime('%Y-%m-%d')}")
         st.sidebar.markdown(f"• Species: {', '.join(forecast.data['Species'].unique())}")
+        
+        # Calculate daily adoptions and handle outliers
+        daily_adoptions_all = forecast.data.groupby('Date').size()
+        
+        if remove_outliers:
+            # Remove outliers using IQR method
+            Q1 = daily_adoptions_all.quantile(0.25)
+            Q3 = daily_adoptions_all.quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            
+            # Filter out outliers
+            daily_adoptions_clean = daily_adoptions_all[(daily_adoptions_all >= lower_bound) & (daily_adoptions_all <= upper_bound)]
+            outlier_dates = daily_adoptions_all[(daily_adoptions_all < lower_bound) | (daily_adoptions_all > upper_bound)]
+            
+            # Show outlier info
+            st.sidebar.markdown("🔍 **Outlier Info:**")
+            st.sidebar.markdown(f"• Outliers removed: {len(outlier_dates)} days")
+            st.sidebar.markdown(f"• Outlier range: {outlier_dates.min():.0f} - {outlier_dates.max():.0f} adoptions")
+            st.sidebar.markdown(f"• Clean data: {len(daily_adoptions_clean)} days")
+            
+            # Use clean data for calculations
+            avg_daily_adoptions = daily_adoptions_clean.mean()
+            filtered_data_for_calc = forecast.data[forecast.data['Date'].isin(daily_adoptions_clean.index)]
+        else:
+            # Use all data
+            avg_daily_adoptions = daily_adoptions_all.mean()
+            filtered_data_for_calc = forecast.data
         
         # Main content area
         tab1, tab2, tab3, tab4 = st.tabs([
@@ -97,12 +132,15 @@ def main():
                 st.metric("Date Range", f"{forecast.data['DateTime'].min().strftime('%Y-%m-%d')} to {forecast.data['DateTime'].max().strftime('%Y-%m-%d')}")
             
             with col3:
-                avg_daily = forecast.data.groupby('Date').size().mean()
-                st.metric("Avg Daily Adoptions", f"{avg_daily:.1f}")
+                st.metric("Avg Daily Adoptions", f"{avg_daily_adoptions:.1f}")
             
             with col4:
                 species_count = len(forecast.data['Species'].unique())
                 st.metric("Species Types", species_count)
+            
+            # Show outlier info if outliers were removed
+            if remove_outliers:
+                st.info(f"🔍 **Outlier Removal Active:** {len(outlier_dates)} outlier days removed. Analysis based on {len(daily_adoptions_clean)} normal days.")
             
             # Species breakdown
             st.subheader("Species Breakdown")
@@ -116,13 +154,18 @@ def main():
             
             # Daily adoptions bell curve
             st.subheader("Daily Adoptions Distribution")
-            daily_adoptions = forecast.data.groupby('Date').size()
+            if remove_outliers:
+                daily_adoptions_for_plot = daily_adoptions_clean
+                title_suffix = " (Outliers Removed)"
+            else:
+                daily_adoptions_for_plot = daily_adoptions_all
+                title_suffix = ""
             
             fig_bell = go.Figure()
             
             # Add histogram
             fig_bell.add_trace(go.Histogram(
-                x=daily_adoptions.values,
+                x=daily_adoptions_for_plot.values,
                 nbinsx=20,
                 name='Actual Data',
                 opacity=0.7,
@@ -130,10 +173,10 @@ def main():
             ))
             
             # Add fitted normal distribution
-            mean_daily = daily_adoptions.mean()
-            std_daily = daily_adoptions.std()
-            x_smooth = np.linspace(daily_adoptions.min(), daily_adoptions.max(), 100)
-            y_smooth = stats.norm.pdf(x_smooth, mean_daily, std_daily) * len(daily_adoptions) * (daily_adoptions.max() - daily_adoptions.min()) / 20
+            mean_daily = daily_adoptions_for_plot.mean()
+            std_daily = daily_adoptions_for_plot.std()
+            x_smooth = np.linspace(daily_adoptions_for_plot.min(), daily_adoptions_for_plot.max(), 100)
+            y_smooth = stats.norm.pdf(x_smooth, mean_daily, std_daily) * len(daily_adoptions_for_plot) * (daily_adoptions_for_plot.max() - daily_adoptions_for_plot.min()) / 20
             
             fig_bell.add_trace(go.Scatter(
                 x=x_smooth,
@@ -144,7 +187,7 @@ def main():
             ))
             
             fig_bell.update_layout(
-                title='Distribution of Daily Adoptions (Bell Curve)',
+                title=f'Distribution of Daily Adoptions (Bell Curve){title_suffix}',
                 xaxis_title='Number of Adoptions per Day',
                 yaxis_title='Frequency',
                 showlegend=True
@@ -161,13 +204,18 @@ def main():
             
             # Daily trends
             st.subheader("Daily Adoption Trends")
-            daily_adoptions = forecast.data.groupby('Date').size().reset_index(name='Adoptions')
+            if remove_outliers:
+                daily_adoptions = daily_adoptions_clean.reset_index(name='Adoptions')
+                title_suffix = " (Outliers Removed)"
+            else:
+                daily_adoptions = forecast.data.groupby('Date').size().reset_index(name='Adoptions')
+                title_suffix = ""
             
             fig_daily = px.line(
                 daily_adoptions,
                 x='Date',
                 y='Adoptions',
-                title='Adoptions per Day',
+                title=f'Adoptions per Day{title_suffix}',
                 markers=True
             )
             fig_daily.update_layout(
@@ -187,7 +235,12 @@ def main():
             
             # Monthly trends
             st.subheader("Monthly Trends")
-            monthly_dist = forecast.data.groupby(['Year', 'Month']).size().reset_index(name='Adoptions')
+            if remove_outliers:
+                monthly_data = filtered_data_for_calc.groupby(['Year', 'Month']).size().reset_index(name='Adoptions')
+            else:
+                monthly_data = forecast.data.groupby(['Year', 'Month']).size().reset_index(name='Adoptions')
+            
+            monthly_dist = monthly_data
             monthly_dist['Date'] = pd.to_datetime(monthly_dist[['Year', 'Month']].assign(day=1))
             
             fig_monthly = px.line(
@@ -216,7 +269,11 @@ def main():
             )
             
             # Apply filter
-            filtered_data = forecast.data.copy()
+            if remove_outliers:
+                filtered_data = filtered_data_for_calc.copy()
+            else:
+                filtered_data = forecast.data.copy()
+                
             if filter_day != 'All Days':
                 filtered_data = filtered_data[filtered_data['DayOfWeek'] == filter_day]
             
@@ -334,8 +391,12 @@ def main():
             
             if len(filtered_data_counselor) > 0:
                 # Calculate average daily adoptions for filtered data
-                daily_adoptions_filtered = filtered_data_counselor.groupby('Date').size()
-                avg_daily_adoptions_filtered = daily_adoptions_filtered.mean()
+                if remove_outliers:
+                    daily_adoptions_filtered = filtered_data_counselor.groupby('Date').size()
+                    avg_daily_adoptions_filtered = daily_adoptions_filtered.mean()
+                else:
+                    daily_adoptions_filtered = filtered_data_counselor.groupby('Date').size()
+                    avg_daily_adoptions_filtered = daily_adoptions_filtered.mean()
                 
                 # Override option
                 st.subheader("📊 Workload Calculation")
